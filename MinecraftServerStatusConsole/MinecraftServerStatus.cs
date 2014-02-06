@@ -3,19 +3,18 @@ using System.Linq;
 using System.Text;
 using System.Net.Sockets;
 using System.Diagnostics;
+using System.Collections.Generic;
 
 namespace MinecraftServerStatusConsole
 {
     class MinecraftServerStatus
     {
         public Boolean Online = false;
-        public int PlayersOnline;
-        public int PlayersMax;
+        public int PlayersOnline = -1;
+        public int PlayersMax = -1;
+        public int ProtocolVersion = -1;
+        public string ServerVersion;
         public string MOTD;
-
-        private byte[] RequestByteArray = new byte[] { 0xFE };
-        private const byte InitialByte = (byte)0xFF;
-        private const byte SplitByte = (byte)0xA7;
 
         public MinecraftServerStatus(string ServerLocation, int ServerPort = 25565)
         {
@@ -24,44 +23,77 @@ namespace MinecraftServerStatusConsole
 
             try
             {
-                IAsyncResult result = tcpClient.BeginConnect(ServerLocation, ServerPort, null, null);
-
-                result.AsyncWaitHandle.WaitOne(3000, true);
+                tcpClient.Connect(ServerLocation, ServerPort);
 
                 if (!tcpClient.Connected)
                 {
+                    // This port isn't even open
                     return;
+                }
+
+                // some servers (bukkit?) seem to respond to this protocol
+                List<byte> requestBytes = new List<byte>();
+                requestBytes.Add(0xFE);
+                requestBytes.Add(0x01);
+                requestBytes.Add(0xFA);
+                requestBytes.AddRange(Encoding.Unicode.GetBytes("MC|PingHost").ToArray());
+                requestBytes.Add((byte)((ServerLocation.Length * 2) + 7));
+                requestBytes.Add((byte)78);
+                requestBytes.AddRange(Encoding.Unicode.GetBytes(ServerLocation).ToArray());
+                requestBytes.AddRange(BitConverter.GetBytes(ServerPort).Reverse());
+
+                using (var networkStream = tcpClient.GetStream())
+                {
+                    networkStream.Write(requestBytes.ToArray(), 0, requestBytes.ToArray().Length);
+                    networkStream.Read(recv, 0, recv.Length);
+                }
+
+                if (recv[4] == 0xA7 && recv[6] == 0x31 && recv[8] == 0x00)
+                {
+                    var responsePieces = Encoding.Unicode.GetString(recv).Split('\0');
+                    Online = true;
+                    ProtocolVersion = int.Parse(responsePieces[1]);
+                    ServerVersion = responsePieces[2];
+                    MOTD = responsePieces[3];
+                    PlayersOnline = int.Parse(responsePieces[4]);
+                    PlayersMax = int.Parse(responsePieces[5]);
+
+                    tcpClient.Close();
+                    return;
+                }
+
+
+                // Try other protocol
+
+                // my vanilla server responds to this protocol
+                tcpClient = new TcpClient();
+                requestBytes = new List<byte>();
+                requestBytes.Add(0xFE);
+                requestBytes.Add(0x01);
+
+                if (!tcpClient.Connected)
+                {
+                    tcpClient.Connect(ServerLocation, ServerPort);
                 }
 
                 using (var networkStream = tcpClient.GetStream())
                 {
-                    networkStream.Write(RequestByteArray, 0, RequestByteArray.Length);
+                    networkStream.Write(requestBytes.ToArray(), 0, requestBytes.ToArray().Length);
                     networkStream.Read(recv, 0, recv.Length);
                 }
 
-                //we expect this to start with 0xFF and contain two 0xA7
-                var validResponse = (recv[0] == InitialByte) && (recv.Count(b => b == SplitByte) == 2);
-                if (!validResponse)
+                if (recv[4] == 0xA7 && recv[6] == 0x31 && recv[8] == 0x00)
                 {
+                    var sresponsePieces = Encoding.Unicode.GetString(recv).Split('\0');
+                    Online = true;
+                    ProtocolVersion = int.Parse(sresponsePieces[1]);
+                    ServerVersion = sresponsePieces[2];
+                    MOTD = sresponsePieces[3];
+                    PlayersOnline = int.Parse(sresponsePieces[4]);
+                    PlayersMax = int.Parse(sresponsePieces[5]);
+                    tcpClient.Close();
                     return;
                 }
-
-                Online = true;
-
-                int positionOfFirstSplitByte = Array.IndexOf(recv, SplitByte);
-                int positionOfSecondSplitByte = Array.IndexOf(recv, SplitByte, positionOfFirstSplitByte + 1);
-
-                var MOTDArray = new byte[((recv.Length - 4) - (recv.Length - positionOfFirstSplitByte))];
-                var PlayersOnlineArray = new byte[(positionOfSecondSplitByte - positionOfFirstSplitByte) - 2];
-                var PlayersMaxArray = new byte[(recv.Length - positionOfSecondSplitByte) - 2];
-
-                Buffer.BlockCopy(recv, 4, MOTDArray, 0, (recv.Length - 4) - (recv.Length - positionOfFirstSplitByte));
-                Buffer.BlockCopy(recv, positionOfFirstSplitByte + 2, PlayersOnlineArray, 0, PlayersOnlineArray.Length);
-                Buffer.BlockCopy(recv, positionOfSecondSplitByte + 2, PlayersMaxArray, 0, PlayersMaxArray.Length);
-
-                MOTD = Encoding.UTF8.GetString(MOTDArray).Replace("\0", string.Empty);
-                PlayersOnline = int.Parse(Encoding.UTF8.GetString(PlayersOnlineArray).Replace("\0", string.Empty));
-                PlayersMax = int.Parse(Encoding.UTF8.GetString(PlayersMaxArray).Replace("\0", string.Empty));
             }
             catch (Exception e)
             {

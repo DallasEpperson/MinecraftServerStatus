@@ -1,7 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 namespace MinecraftServerStatusConsole
 {
@@ -17,6 +14,8 @@ namespace MinecraftServerStatusConsole
                 Console.WriteLine("MOTD: " + ServerStatus.MOTD);
                 Console.WriteLine("Players Online:  " + ServerStatus.PlayersOnline);
                 Console.WriteLine("Player Capacity: " + ServerStatus.PlayersMax);
+                Console.WriteLine("Server Version: " + ServerStatus.ServerVersion);
+                Console.WriteLine("Protocol Version: " + ServerStatus.ProtocolVersion);
             }
             else
             {
